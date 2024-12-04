@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import OAuth2PasswordBearer
 from .models import Product
-from .crud import create_product, get_all_products, get_product_by_id, update_product, delete_product
+from .crud import create_product, get_all_products, get_product_by_id, update_product as update_product_in_db, delete_product
 from pymongo.errors import DuplicateKeyError
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
@@ -98,33 +98,64 @@ def login_user(user: UserCreate, db=Depends(get_db)):
 
 
 @app.post("/products/")
-def created_product_endpoint(product: Product):
+def created_product_endpoint(product: Product, db=Depends(get_db)):
     created_product = create_product(product)
+    created_product["_id"] = str(created_product["_id"])
     return {"message": "Product created successfully", "product": created_product}
 
 @app.get("/products/")
 def get_products_endpoint():
     products = get_all_products()
+    products = [{**product, "_id": str(product["_id"])} for product in products]
     return {"products": products}
 
 @app.get("/products/{product_id}")
 def get_product_by_id_endpoint(product_id: str):
-    product = get_product_by_id(product_id)
+    try:
+        product_object_id = ObjectId(product_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Invalid product ID format")
+    
+    product = get_product_by_id(product_object_id)
+
     if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-    return {"product":product}
+        raise HTTPException(status_code=404, detail="Product no found")
+    
+    product["_id"] = str(product["_id"])
+    return {"product": product}
+
+
 
 @app.put("/products/{product_id}")
-def update_product_endpoint(product_id: str, product: Product):
-    update_product = update_product(product_id, product)
+def update_product_endpoint(product_id: str, product: Product, db=Depends(get_db)):
+    try:
+        product_object_id = ObjectId(product_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="INvalid product ID format")
+    
+    update_product = update_product_in_db(product_object_id, product)
+    
     if not update_product:
         raise HTTPException(status_code=404, detail="Product not found")
+   
+    update_product["_id"] = str(update_product["_id"])
     return {"message": "Product update succesfully", "product": update_product}
 
+
+
+
 @app.delete("/products/{product_id}")
-def delete_product_endpoint(product_id: str):
-    product = get_product_by_id(product_id)
+def delete_product_endpoint(product_id: str, db=Depends(get_db)):
+    try:
+        product_object_id = ObjectId(product_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Invalid product ID format")
+        
+    product = get_product_by_id(product_object_id)
+    
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    delete_product(product_id)
+    
+    delete_product(product_object_id)
+    
     return {"message": "Product deleted succesfully"}
