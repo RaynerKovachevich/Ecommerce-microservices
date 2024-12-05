@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.security import OAuth2PasswordBearer
 from .models import Product
 from .crud import create_product, get_all_products, get_product_by_id, update_product as update_product_in_db, delete_product
@@ -28,11 +28,17 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=6)
 
 
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=6)    
+
+
 def get_db():
     db = get_db_connection()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection error")
     return db
+
 
 def generate_jwt(user_data):
     expiration = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -43,6 +49,17 @@ def generate_jwt(user_data):
     
     token = jwt.encode(payload, JWT_SECRET, JWT_ALGORITHM)
     return token
+
+
+def verify_jwt(token: str = Security(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=404, detail="Invalid Token")
+    
 
 @app.get("/")
 def root():
@@ -87,7 +104,7 @@ def get_user_by_id(user_id: str, db=Depends(get_db)):
 
 
 @app.post("/users/login")
-def login_user(user: UserCreate, db=Depends(get_db)):
+def login_user(user: UserLogin, db=Depends(get_db)):
     users_collection = db["users"]
     user_data = users_collection.find_one({"email": user.email})
     if not user_data or not pwd_context.verify(user.password, user_data["password"]):
@@ -98,19 +115,19 @@ def login_user(user: UserCreate, db=Depends(get_db)):
 
 
 @app.post("/products/")
-def created_product_endpoint(product: Product, db=Depends(get_db)):
+def created_product_endpoint(product: Product, db=Depends(get_db) , token=Depends(verify_jwt)):
     created_product = create_product(product)
     created_product["_id"] = str(created_product["_id"])
     return {"message": "Product created successfully", "product": created_product}
 
 @app.get("/products/")
-def get_products_endpoint():
+def get_products_endpoint(token=Depends(verify_jwt)):
     products = get_all_products()
     products = [{**product, "_id": str(product["_id"])} for product in products]
     return {"products": products}
 
 @app.get("/products/{product_id}")
-def get_product_by_id_endpoint(product_id: str):
+def get_product_by_id_endpoint(product_id: str, token=Depends(verify_jwt)):
     try:
         product_object_id = ObjectId(product_id)
     except Exception:
@@ -127,11 +144,11 @@ def get_product_by_id_endpoint(product_id: str):
 
 
 @app.put("/products/{product_id}")
-def update_product_endpoint(product_id: str, product: Product, db=Depends(get_db)):
+def update_product_endpoint(product_id: str, product: Product, db=Depends(get_db), token=Depends(verify_jwt)):
     try:
         product_object_id = ObjectId(product_id)
     except Exception:
-        raise HTTPException(status_code=404, detail="INvalid product ID format")
+        raise HTTPException(status_code=404, detail="Invalid product ID format")
     
     update_product = update_product_in_db(product_object_id, product)
     
@@ -145,7 +162,7 @@ def update_product_endpoint(product_id: str, product: Product, db=Depends(get_db
 
 
 @app.delete("/products/{product_id}")
-def delete_product_endpoint(product_id: str, db=Depends(get_db)):
+def delete_product_endpoint(product_id: str, db=Depends(get_db), token=Depends(verify_jwt)):
     try:
         product_object_id = ObjectId(product_id)
     except Exception:
